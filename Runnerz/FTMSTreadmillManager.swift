@@ -34,9 +34,9 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
             authorizationContinuation = continuation
             if central == nil {
                 central = CBCentralManager(delegate: self, queue: .main)
-            } else {
-                resolveAuthorization()
             }
+            resolveAuthorization()
+            if authorizationContinuation != nil { startAuthorizationProbe() }
         }
     }
 
@@ -88,11 +88,20 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
         guard let peripheral, let controlPoint, CBManager.authorization == .allowedAlways else { return }
         peripheral.writeValue(Data(bytes), for: controlPoint, type: .withResponse)
     }
+
+    private func startAuthorizationProbe() {
+        guard let central, central.state == .poweredOn else { return }
+        central.scanForPeripherals(withServices: [serviceUUID], options: nil)
+    }
 }
 
 extension FTMSTreadmillManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         resolveAuthorization()
+        if CBManager.authorization == .notDetermined {
+            startAuthorizationProbe()
+            return
+        }
         guard CBManager.authorization == .allowedAlways else {
             connectionText = "Bluetooth access required"
             return
@@ -107,9 +116,11 @@ extension FTMSTreadmillManager: CBCentralManagerDelegate {
     private func resolveAuthorization() {
         switch CBManager.authorization {
         case .allowedAlways:
+            central?.stopScan()
             authorizationContinuation?.resume(returning: true)
             authorizationContinuation = nil
         case .denied, .restricted:
+            central?.stopScan()
             connectionText = "Bluetooth access required"
             authorizationContinuation?.resume(returning: false)
             authorizationContinuation = nil

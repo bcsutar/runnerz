@@ -21,17 +21,15 @@ struct ContentView: View {
     @ObservedObject var workout: WorkoutManager
     @State private var showingTreadmills = false
     @State private var permissionsReady = false
-    @State private var isRequestingPermissions = true
-    @State private var permissionMessage = "Runnerz needs Health and Bluetooth access before a workout can start."
+    @State private var permissionMessage: String?
 
     var body: some View {
         NavigationStack {
             Group {
-                if permissionsReady {
+                if permissionsReady || permissionMessage == nil {
                     WatchHomeView(treadmill: treadmill, workout: workout)
                 } else {
-                    PermissionGateView(message: permissionMessage,
-                                       isLoading: isRequestingPermissions,
+                    PermissionGateView(message: permissionMessage!,
                                        retry: {
                                            Task { await preparePermissions() }
                                        })
@@ -95,14 +93,12 @@ struct ContentView: View {
 
     private func preparePermissions() async {
         await MainActor.run {
-            isRequestingPermissions = true
-            permissionMessage = "Runnerz needs Health and Bluetooth access before a workout can start."
+            permissionMessage = nil
         }
 
         workout.clearStartError()
         guard await workout.requestAuthorization() else {
             await MainActor.run {
-                isRequestingPermissions = false
                 permissionMessage = "Allow Runnerz to access Health data, then tap Try Again."
             }
             return
@@ -110,7 +106,6 @@ struct ContentView: View {
 
         guard await treadmill.requestAuthorization() else {
             await MainActor.run {
-                isRequestingPermissions = false
                 permissionMessage = "Allow Runnerz to use Bluetooth, then tap Try Again."
             }
             return
@@ -119,7 +114,6 @@ struct ContentView: View {
         treadmill.startScanning()
         await MainActor.run {
             permissionsReady = true
-            isRequestingPermissions = false
         }
     }
 
@@ -127,12 +121,11 @@ struct ContentView: View {
 
 private struct PermissionGateView: View {
     let message: String
-    let isLoading: Bool
     let retry: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: isLoading ? "lock.shield" : "exclamationmark.triangle")
+            Image(systemName: "exclamationmark.triangle")
                 .font(.title2)
                 .foregroundStyle(.yellow)
 
@@ -144,14 +137,9 @@ private struct PermissionGateView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            if isLoading {
-                ProgressView()
-                    .accessibilityLabel("Requesting permissions")
-            } else {
-                Button("Try Again", action: retry)
-                    .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
-                    .tint(.yellow)
-            }
+            Button("Try Again", action: retry)
+                .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
+                .tint(.yellow)
         }
         .scenePadding()
     }
