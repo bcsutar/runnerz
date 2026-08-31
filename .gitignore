@@ -1,0 +1,14 @@
+# Xcode and macOS generated files
+.DS_Store
+DerivedData/
+**/build*/
+**/xcuserdata/
+*.xcuserstate
+*.xcarchive
+
+# Build products
+*.app/
+*.dSYM/
+
+# Local reference material
+/.reference/
