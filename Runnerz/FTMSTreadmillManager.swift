@@ -11,25 +11,38 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     @Published var distanceMeters = 0.0
     @Published var inclinePercent = 0.0
     @Published var caloriesKcal = 0.0
-    @Published private(set) var connectionText = "Looking for treadmill"
+    @Published private(set) var connectionText = "Permissions required"
     @Published private(set) var treadmills: [Treadmill] = []
     @Published private(set) var isConnected = false
 
     private let serviceUUID = CBUUID(string: "1826")
     private let treadmillDataUUID = CBUUID(string: "2ACD")
     private let controlPointUUID = CBUUID(string: "2AD9")
-    private var central: CBCentralManager!
+    private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var controlPoint: CBCharacteristic?
     private var peripherals: [UUID: CBPeripheral] = [:]
+    private var authorizationContinuation: CheckedContinuation<Bool, Never>?
+    private var scanningEnabled = false
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    func requestAuthorization() async -> Bool {
+        await withCheckedContinuation { continuation in
+            authorizationContinuation = continuation
+            if central == nil {
+                central = CBCentralManager(delegate: self, queue: .main)
+            } else {
+                resolveAuthorization()
+            }
+        }
     }
 
     func startScanning() {
-        guard central.state == .poweredOn else { return }
+        scanningEnabled = true
+        guard let central, CBManager.authorization == .allowedAlways, central.state == .poweredOn else { return }
         central.stopScan()
 
         if isConnected, let peripheral {
@@ -49,7 +62,8 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     }
 
     func connect(to treadmill: Treadmill) {
-        guard let peripheral = peripherals[treadmill.id] else { return }
+        guard let central, CBManager.authorization == .allowedAlways,
+              let peripheral = peripherals[treadmill.id] else { return }
         central.stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
@@ -71,15 +85,40 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     }
 
     private func writeControlPoint(_ bytes: [UInt8]) {
-        guard let peripheral, let controlPoint else { return }
+        guard let peripheral, let controlPoint, CBManager.authorization == .allowedAlways else { return }
         peripheral.writeValue(Data(bytes), for: controlPoint, type: .withResponse)
     }
 }
 
 extension FTMSTreadmillManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn { startScanning() }
-        else { connectionText = "Bluetooth unavailable" }
+        resolveAuthorization()
+        guard CBManager.authorization == .allowedAlways else {
+            connectionText = "Bluetooth access required"
+            return
+        }
+        if central.state == .poweredOn, scanningEnabled {
+            startScanning()
+        } else if central.state != .poweredOn {
+            connectionText = "Bluetooth unavailable"
+        }
+    }
+
+    private func resolveAuthorization() {
+        switch CBManager.authorization {
+        case .allowedAlways:
+            authorizationContinuation?.resume(returning: true)
+            authorizationContinuation = nil
+        case .denied, .restricted:
+            connectionText = "Bluetooth access required"
+            authorizationContinuation?.resume(returning: false)
+            authorizationContinuation = nil
+        case .notDetermined:
+            break
+        @unknown default:
+            authorizationContinuation?.resume(returning: false)
+            authorizationContinuation = nil
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,

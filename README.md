@@ -28,7 +28,7 @@ Runnerz is a focused watchOS running app for Bluetooth FTMS treadmills. It provi
 4. Select your local development team under Signing & Capabilities.
 5. Build and run.
 
-The target includes HealthKit and workout-processing configuration. On a real watch, grant workout write and heart-rate read access when prompted. If access was previously denied, update it in the Health privacy settings on the paired iPhone.
+The target includes HealthKit and workout-processing configuration. On launch, Runnerz requests HealthKit access first and Bluetooth access second; treadmill discovery and workout controls remain unavailable until both are granted. On a real watch, grant workout write and heart-rate read access when prompted. If access was previously denied, update it in the Health privacy settings on the paired iPhone.
 
 ## Simulator Testing
 

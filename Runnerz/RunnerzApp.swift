@@ -20,10 +20,23 @@ struct ContentView: View {
     @ObservedObject var treadmill: FTMSTreadmillManager
     @ObservedObject var workout: WorkoutManager
     @State private var showingTreadmills = false
+    @State private var permissionsReady = false
+    @State private var isRequestingPermissions = true
+    @State private var permissionMessage = "Runnerz needs Health and Bluetooth access before a workout can start."
 
     var body: some View {
         NavigationStack {
-            WatchHomeView(treadmill: treadmill, workout: workout)
+            Group {
+                if permissionsReady {
+                    WatchHomeView(treadmill: treadmill, workout: workout)
+                } else {
+                    PermissionGateView(message: permissionMessage,
+                                       isLoading: isRequestingPermissions,
+                                       retry: {
+                                           Task { await preparePermissions() }
+                                       })
+                }
+            }
                 .containerBackground(for: .navigation) {
                     ZStack {
                         Color.black
@@ -49,7 +62,7 @@ struct ContentView: View {
                     }
             }
             .toolbar {
-                if !showingTreadmills && !workout.isRunning && workout.review == nil {
+                if permissionsReady && !showingTreadmills && !workout.isRunning && workout.review == nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             showingTreadmills = true
@@ -67,7 +80,10 @@ struct ContentView: View {
             }
         }
         .task {
-            treadmill.startScanning()
+            await preparePermissions()
+        }
+        .task(id: permissionsReady) {
+            guard permissionsReady else { return }
             while !Task.isCancelled {
                 workout.recordMetrics(speedKph: treadmill.speedKph,
                                       distanceMeters: treadmill.distanceMeters,
@@ -77,6 +93,68 @@ struct ContentView: View {
         }
     }
 
+    private func preparePermissions() async {
+        await MainActor.run {
+            isRequestingPermissions = true
+            permissionMessage = "Runnerz needs Health and Bluetooth access before a workout can start."
+        }
+
+        workout.clearStartError()
+        guard await workout.requestAuthorization() else {
+            await MainActor.run {
+                isRequestingPermissions = false
+                permissionMessage = "Allow Runnerz to access Health data, then tap Try Again."
+            }
+            return
+        }
+
+        guard await treadmill.requestAuthorization() else {
+            await MainActor.run {
+                isRequestingPermissions = false
+                permissionMessage = "Allow Runnerz to use Bluetooth, then tap Try Again."
+            }
+            return
+        }
+
+        treadmill.startScanning()
+        await MainActor.run {
+            permissionsReady = true
+            isRequestingPermissions = false
+        }
+    }
+
+}
+
+private struct PermissionGateView: View {
+    let message: String
+    let isLoading: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: isLoading ? "lock.shield" : "exclamationmark.triangle")
+                .font(.title2)
+                .foregroundStyle(.yellow)
+
+            Text("Permissions Required")
+                .font(.headline)
+
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            if isLoading {
+                ProgressView()
+                    .accessibilityLabel("Requesting permissions")
+            } else {
+                Button("Try Again", action: retry)
+                    .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
+                    .tint(.yellow)
+            }
+        }
+        .scenePadding()
+    }
 }
 
 struct TreadmillListView: View {

@@ -44,16 +44,20 @@ final class WorkoutManager: NSObject, ObservableObject {
             return false
         }
         let workoutType = HKObjectType.workoutType()
-        let share: Set<HKSampleType> = [workoutType, .quantityType(forIdentifier: .distanceWalkingRunning)!, .quantityType(forIdentifier: .activeEnergyBurned)!]
+        let distanceType = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!
+        let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        let speedType = HKQuantityType.quantityType(forIdentifier: .runningSpeed)!
+        let writableTypes: [HKSampleType] = [workoutType, distanceType, energyType, speedType]
+        let share = Set(writableTypes)
         let read: Set<HKObjectType> = [
             workoutType,
             .quantityType(forIdentifier: .heartRate)!,
-            .quantityType(forIdentifier: .distanceWalkingRunning)!,
-            .quantityType(forIdentifier: .activeEnergyBurned)!
+            distanceType,
+            energyType
         ]
         do {
             try await healthStore.requestAuthorization(toShare: share, read: read)
-            guard healthStore.authorizationStatus(for: workoutType) == .sharingAuthorized else {
+            guard writableTypes.allSatisfy({ healthStore.authorizationStatus(for: $0) == .sharingAuthorized }) else {
                 await MainActor.run {
                     self.startError = "Allow Runnerz to write workouts in Health, then try again."
                 }
