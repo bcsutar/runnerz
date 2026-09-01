@@ -1,7 +1,41 @@
 import SwiftUI
+import HealthKit
 
 private extension Color {
     static let runnerzRed = Color(red: 0.96, green: 0.04, blue: 0.09)
+}
+
+private enum SportType: Hashable {
+    case running
+    case walking
+
+    var icon: String {
+        switch self {
+        case .running: return "figure.run.treadmill"
+        case .walking: return "figure.walk"
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .running: return .runnerzRed
+        case .walking: return .orange
+        }
+    }
+
+    var activityType: HKWorkoutActivityType {
+        switch self {
+        case .running: return .running
+        case .walking: return .walking
+        }
+    }
+
+    var startLabel: String {
+        switch self {
+        case .running: return "Start run"
+        case .walking: return "Start walk"
+        }
+    }
 }
 
 @main
@@ -21,11 +55,14 @@ struct ContentView: View {
     @ObservedObject var workout: WorkoutManager
     @State private var showingTreadmills = false
     @State private var showingSettings = false
+    @State private var selectedSport: SportType = .running
     @State private var permissionsReady = false
 
     var body: some View {
         NavigationStack {
-            WatchHomeView(treadmill: treadmill, workout: workout)
+            WatchHomeView(treadmill: treadmill,
+                          workout: workout,
+                          selectedSport: $selectedSport)
                 .containerBackground(for: .navigation) {
                     ZStack {
                         Color.black
@@ -33,13 +70,13 @@ struct ContentView: View {
                         RadialGradient(
                             colors: [
                                 workout.review == nil
-                                    ? Color.runnerzRed.opacity(0.55)
+                                    ? selectedSport.accent.opacity(0.55)
                                     : Color(red: 0, green: 0.9, blue: 0.2, opacity: 0.55),
                                 workout.review == nil
-                                    ? Color.runnerzRed.opacity(0.2)
+                                    ? selectedSport.accent.opacity(0.2)
                                     : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0.2),
                                 workout.review == nil
-                                    ? Color.runnerzRed.opacity(0)
+                                    ? selectedSport.accent.opacity(0)
                                     : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0),
                             ],
                             center: .center,
@@ -51,6 +88,7 @@ struct ContentView: View {
                         .compositingGroup()
                         .blur(radius: 16)
                         .offset(y: 96)
+                        .animation(.easeInOut(duration: 0.4), value: selectedSport)
                     }
             }
             .toolbar {
@@ -156,6 +194,7 @@ struct TreadmillListView: View {
 private struct WatchHomeView: View {
     @ObservedObject var treadmill: FTMSTreadmillManager
     @ObservedObject var workout: WorkoutManager
+    @Binding var selectedSport: SportType
     @AppStorage("autoStartEnabled") private var autoStartEnabled = false
     @AppStorage("autoPauseEnabled") private var autoPauseEnabled = false
     @AppStorage("autoContinueEnabled") private var autoContinueEnabled = false
@@ -222,31 +261,31 @@ private struct WatchHomeView: View {
 
                     Spacer()
                 } else {
-                    Spacer()
+                    VStack(spacing: 8) {
+                        TabView(selection: $selectedSport) {
+                            SportPageView(sport: .running, treadmill: treadmill)
+                                .tag(SportType.running)
 
-                    VStack(spacing: 5) {
-                        Image(systemName: "figure.run.treadmill")
-                            .font(.system(size: 49, weight: .medium))
-                            .foregroundStyle(Color.runnerzRed)
+                            SportPageView(sport: .walking, treadmill: treadmill)
+                                .tag(SportType.walking)
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .allowsHitTesting(countdown == nil)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                        Text(treadmill.isConnected ? "Ready" : "Connect treadmill")
-                            .font(.caption.weight(.semibold))
+                        Button { beginStartCountdown() } label: {
+                            Image(systemName: "play.fill")
+                                .foregroundStyle(.primary)
+                                .font(.title2)
+                                .frame(width: 56, height: 56)
+                        }
+                        .buttonStyle(.glass(.regular.interactive()))
+                        .buttonBorderShape(.circle)
+                        .frame(width: 56, height: 56)
+                        .accessibilityLabel(selectedSport.startLabel)
+                        .disabled(!treadmill.isConnected || countdown != nil)
+                        .offset(y: 10)
                     }
-
-                    Spacer()
-
-                    Button { beginStartCountdown() } label: {
-                        Image(systemName: "play.fill")
-                            .foregroundStyle(Color.runnerzRed)
-                            .font(.title2)
-                            .frame(width: 56, height: 56)
-                    }
-                    .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
-                    .buttonBorderShape(.circle)
-                    .frame(width: 56, height: 56)
-                    .tint(Color.runnerzRed)
-                    .accessibilityLabel("Start run")
-                    .disabled(!treadmill.isConnected || countdown != nil)
                 }
             }
 
@@ -333,7 +372,7 @@ private struct WatchHomeView: View {
                 return
             }
 
-            workout.start()
+            workout.start(activityType: selectedSport.activityType)
             if !countdownIsAutomatic { treadmill.startTreadmill() }
             countdown = nil
             countdownIsAutomatic = false
@@ -395,6 +434,29 @@ private struct WatchHomeView: View {
             let willPause = workout.togglePause()
             treadmill.pauseTreadmill(paused: willPause)
         }
+    }
+}
+
+private struct SportPageView: View {
+    let sport: SportType
+    @ObservedObject var treadmill: FTMSTreadmillManager
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Spacer()
+
+            VStack(spacing: 5) {
+                Image(systemName: sport.icon)
+                    .font(.system(size: 39.2, weight: .medium))
+                    .foregroundStyle(sport.accent)
+
+                Text(treadmill.isConnected ? "Ready" : "Connect treadmill")
+                    .font(.caption.weight(.semibold))
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

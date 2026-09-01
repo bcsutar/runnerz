@@ -76,7 +76,7 @@ final class WorkoutManager: NSObject, ObservableObject {
         startError = nil
     }
 
-    func start() {
+    func start(activityType: HKWorkoutActivityType) {
         guard !isRunning else { return }
         timer?.invalidate()
         timer = nil
@@ -87,7 +87,7 @@ final class WorkoutManager: NSObject, ObservableObject {
         pauseStartedAt = nil
         totalPausedDuration = 0
         let configuration = HKWorkoutConfiguration()
-        configuration.activityType = .running
+        configuration.activityType = activityType
         configuration.locationType = .indoor
         do {
             let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
@@ -161,10 +161,16 @@ final class WorkoutManager: NSObject, ObservableObject {
                     let averageHeartRate = builder.statistics(for: HKObjectType.quantityType(forIdentifier: .heartRate)!)?
                         .averageQuantity()?
                         .doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                    let finalizedDistance = builder.statistics(for: HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!)?
+                        .sumQuantity()?
+                        .doubleValue(for: .meter()) ?? 0
+                    let finalizedCalories = builder.statistics(for: HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!)?
+                        .sumQuantity()?
+                        .doubleValue(for: .kilocalorie()) ?? 0
                     self.review = WorkoutReview(averageHeartRate: Int((averageHeartRate ?? 0).rounded()),
                                                 elapsedText: self.elapsedText,
-                                                distanceMeters: distanceMeters,
-                                                caloriesKcal: caloriesKcal)
+                                                distanceMeters: finalizedDistance > 0 ? finalizedDistance : distanceMeters,
+                                                caloriesKcal: finalizedCalories > 0 ? finalizedCalories : caloriesKcal)
                 }
             }
         }
