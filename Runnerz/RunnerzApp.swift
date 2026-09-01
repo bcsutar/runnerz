@@ -47,7 +47,9 @@ struct ContentView: View {
                                 workout.review == nil
                                     ? Color.runnerzRed.opacity(0.2)
                                     : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0.2),
-                                .clear
+                                workout.review == nil
+                                    ? Color.runnerzRed.opacity(0)
+                                    : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0),
                             ],
                             center: .center,
                             startRadius: 0,
@@ -55,6 +57,7 @@ struct ContentView: View {
                         )
                         .frame(maxWidth: .infinity)
                         .frame(height: 100)
+                        .compositingGroup()
                         .blur(radius: 16)
                         .offset(y: 96)
                     }
@@ -192,104 +195,150 @@ struct TreadmillListView: View {
 private struct WatchHomeView: View {
     @ObservedObject var treadmill: FTMSTreadmillManager
     @ObservedObject var workout: WorkoutManager
+    @AppStorage("autoStartEnabled") private var autoStartEnabled = false
+    @AppStorage("autoPauseEnabled") private var autoPauseEnabled = false
+    @AppStorage("autoContinueEnabled") private var autoContinueEnabled = false
     @State private var showingStopConfirmation = false
     @State private var showingConnectionLoss = false
+    @State private var countdown: Int?
+    @State private var countdownTask: Task<Void, Never>?
+    @State private var countdownIsAutomatic = false
+    @State private var autoStartSince: Date?
+    @State private var lowSpeedSince: Date?
+    @State private var autoPauseTriggered = false
+    @State private var workoutHasMoved = false
+
+    private let autoStartThreshold = 0.5
+    private let autoPauseThreshold = 0.3
 
     var body: some View {
-        VStack(spacing: 8) {
-            if let review = workout.review {
-                WorkoutReviewView(workout: workout, review: review)
-            } else if workout.isRunning {
-                Spacer()
+        ZStack {
+            VStack(spacing: 8) {
+                if let review = workout.review {
+                    WorkoutReviewView(workout: workout, review: review)
+                } else if workout.isRunning {
+                    Spacer()
 
-                VStack(spacing: 16) {
-                    RunningMetricsView(treadmill: treadmill, workout: workout)
+                    VStack(spacing: 16) {
+                        RunningMetricsView(treadmill: treadmill, workout: workout)
 
-                    HStack {
-                        Button {
-                            workout.togglePause()
-                            treadmill.pauseTreadmill(paused: workout.isPaused)
-                        } label: {
-                            Image(systemName: workout.isPaused ? "play.fill" : "pause.fill")
-                                .foregroundStyle(.yellow)
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
-                        .buttonBorderShape(.circle)
-                        .tint(.yellow)
-                        .accessibilityLabel(workout.isPaused ? "Resume" : "Pause")
-                        .disabled(!treadmill.isConnected)
-
-                        Button(role: .destructive) {
-                            showingStopConfirmation = true
-                        } label: {
-                            Image(systemName: "xmark")
-                                .foregroundStyle(Color.runnerzRed)
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
-                        .buttonBorderShape(.circle)
-                        .tint(Color.runnerzRed)
-                        .accessibilityLabel("Stop")
-                        .confirmationDialog("Stop this workout?", isPresented: $showingStopConfirmation) {
-                            Button("Stop Workout", role: .destructive) {
-                                treadmill.stopTreadmill()
-                                workout.stop(distanceMeters: treadmill.distanceMeters,
-                                             caloriesKcal: treadmill.caloriesKcal)
+                        HStack {
+                            Button {
+                                let willPause = workout.togglePause()
+                                treadmill.pauseTreadmill(paused: willPause)
+                            } label: {
+                                Image(systemName: workout.isPaused ? "play.fill" : "pause.fill")
+                                    .foregroundStyle(.yellow)
+                                    .frame(width: 44, height: 44)
                             }
-                            Button("Cancel", role: .cancel) {}
+                            .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
+                            .buttonBorderShape(.circle)
+                            .tint(.yellow)
+                            .accessibilityLabel(workout.isPaused ? "Resume" : "Pause")
+                            .disabled(!treadmill.isConnected)
+
+                            Button(role: .destructive) {
+                                showingStopConfirmation = true
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .foregroundStyle(Color.runnerzRed)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
+                            .buttonBorderShape(.circle)
+                            .tint(Color.runnerzRed)
+                            .accessibilityLabel("Stop")
+                            .confirmationDialog("Stop this workout?", isPresented: $showingStopConfirmation) {
+                                Button("Stop Workout", role: .destructive) {
+                                    treadmill.stopTreadmill()
+                                    workout.stop(distanceMeters: treadmill.distanceMeters,
+                                                 caloriesKcal: treadmill.caloriesKcal)
+                                }
+                                Button("Cancel", role: .cancel) {}
+                            }
                         }
                     }
-                }
 
-                Spacer()
-            } else {
-                Spacer()
+                    Spacer()
+                } else {
+                    Spacer()
 
-                VStack(spacing: 5) {
-                    Image(systemName: "figure.run.treadmill")
-                        .font(.system(size: 49, weight: .medium))
-                        .foregroundStyle(Color.runnerzRed)
+                    VStack(spacing: 5) {
+                        Image(systemName: "figure.run.treadmill")
+                            .font(.system(size: 49, weight: .medium))
+                            .foregroundStyle(Color.runnerzRed)
 
-                    Text(treadmill.isConnected ? "Ready" : "Connect treadmill")
-                        .font(.caption.weight(.semibold))
-                }
-
-                Spacer()
-
-                Button {
-                    Task {
-                        workout.clearStartError()
-                        guard await workout.requestAuthorization() else { return }
-                        await MainActor.run {
-                            guard treadmill.isConnected else {
-                                showingConnectionLoss = true
-                                return
-                            }
-                            workout.start()
-                            treadmill.startTreadmill()
-                        }
+                        Text(treadmill.isConnected ? "Ready" : "Connect treadmill")
+                            .font(.caption.weight(.semibold))
                     }
+
+                    Spacer()
+
+                    Button { beginStartCountdown() } label: {
+                        Image(systemName: "play.fill")
+                            .foregroundStyle(Color.runnerzRed)
+                            .font(.title2)
+                            .frame(width: 56, height: 56)
+                    }
+                    .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
+                    .buttonBorderShape(.circle)
+                    .frame(width: 56, height: 56)
+                    .tint(Color.runnerzRed)
+                    .accessibilityLabel("Start run")
+                    .disabled(!treadmill.isConnected || countdown != nil)
+                }
+            }
+
+            if let countdown {
+                CountdownOverlay(value: countdown)
+            }
+
+            if !workout.isRunning && workout.review == nil && countdown == nil {
+                NavigationLink {
+                    SettingsView()
                 } label: {
-                    Image(systemName: "play.fill")
-                        .foregroundStyle(Color.runnerzRed)
-                        .font(.title2)
-                        .frame(width: 56, height: 56)
+                    Image(systemName: "gearshape.fill")
+                        .frame(width: 36, height: 36)
                 }
-                .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
+                .buttonStyle(.glass(.regular.interactive()))
                 .buttonBorderShape(.circle)
-                .frame(width: 56, height: 56)
-                .tint(Color.runnerzRed)
-                .accessibilityLabel("Start run")
-                .disabled(!treadmill.isConnected)
+                .accessibilityLabel("Settings")
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.bottom, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scenePadding(.horizontal)
         .onChange(of: treadmill.isConnected) { _, isConnected in
-            guard !isConnected, workout.isRunning else { return }
-            workout.pauseForConnectionLoss()
+            guard !isConnected else { return }
+            cancelStartCountdown()
+            guard workout.isRunning else { return }
+            if workout.pauseForConnectionLoss() {
+                treadmill.pauseTreadmill(paused: true)
+            }
             showingConnectionLoss = true
+        }
+        .onChange(of: treadmill.speedKph) { _, _ in
+            checkAutomaticBehavior()
+        }
+        .onChange(of: workout.isRunning) { _, isRunning in
+            if !isRunning {
+                autoStartSince = nil
+                lowSpeedSince = nil
+                autoPauseTriggered = false
+                workoutHasMoved = false
+            } else if treadmill.speedKph > autoStartThreshold {
+                workoutHasMoved = true
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                checkAutomaticBehavior()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .onDisappear {
+            cancelStartCountdown()
         }
         .alert("Treadmill Disconnected", isPresented: $showingConnectionLoss) {
             Button("OK", role: .cancel) {}
@@ -308,6 +357,134 @@ private struct WatchHomeView: View {
         } message: {
             Text(workout.startError ?? "Please try again.")
         }
+    }
+
+    private func beginStartCountdown(automatic: Bool = false) {
+        guard countdown == nil, !workout.isRunning, workout.review == nil, treadmill.isConnected else { return }
+        countdownIsAutomatic = automatic
+        countdownTask?.cancel()
+        countdownTask = Task { @MainActor in
+            for value in stride(from: 3, through: 1, by: -1) {
+                guard !Task.isCancelled else {
+                    countdown = nil
+                    return
+                }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    countdown = value
+                }
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    countdown = nil
+                    return
+                }
+            }
+
+            guard !Task.isCancelled, treadmill.isConnected else {
+                countdown = nil
+                return
+            }
+
+            workout.start()
+            if !countdownIsAutomatic { treadmill.startTreadmill() }
+            countdown = nil
+            countdownIsAutomatic = false
+            countdownTask = nil
+        }
+    }
+
+    private func cancelStartCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        countdown = nil
+        countdownIsAutomatic = false
+    }
+
+    private func checkAutomaticBehavior() {
+        let now = Date()
+        let speed = treadmill.speedKph
+
+        if workout.isRunning && speed > autoStartThreshold {
+            workoutHasMoved = true
+        }
+
+        if autoStartEnabled && !workout.isRunning && workout.review == nil && treadmill.isConnected {
+            if speed > autoStartThreshold {
+                if autoStartSince == nil { autoStartSince = now }
+                if now.timeIntervalSince(autoStartSince!) >= 1 {
+                    beginStartCountdown(automatic: true)
+                    autoStartSince = nil
+                }
+            } else {
+                autoStartSince = nil
+                if countdownIsAutomatic { cancelStartCountdown() }
+            }
+        } else {
+            autoStartSince = nil
+            if countdownIsAutomatic { cancelStartCountdown() }
+        }
+
+        if autoPauseEnabled && workout.isRunning && !workout.isPaused && workoutHasMoved {
+            if speed < autoPauseThreshold {
+                if lowSpeedSince == nil { lowSpeedSince = now }
+                if now.timeIntervalSince(lowSpeedSince!) >= 3 && !autoPauseTriggered {
+                    autoPauseTriggered = true
+                    if workout.pauseForConnectionLoss() {
+                        treadmill.pauseTreadmill(paused: true)
+                        showingStopConfirmation = true
+                    }
+                }
+            } else {
+                lowSpeedSince = nil
+            }
+        } else {
+            lowSpeedSince = nil
+        }
+
+        if autoPauseTriggered && autoContinueEnabled && workout.isPaused && speed > autoStartThreshold {
+            showingStopConfirmation = false
+            autoPauseTriggered = false
+            let willPause = workout.togglePause()
+            treadmill.pauseTreadmill(paused: willPause)
+        }
+    }
+}
+
+private struct CountdownOverlay: View {
+    let value: Int
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("GET READY")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .font(.system(size: 52, weight: .black, design: .rounded))
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+        .transition(.scale.combined(with: .opacity))
+    }
+}
+
+private struct SettingsView: View {
+    @AppStorage("autoStartEnabled") private var autoStartEnabled = false
+    @AppStorage("autoPauseEnabled") private var autoPauseEnabled = false
+    @AppStorage("autoContinueEnabled") private var autoContinueEnabled = false
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Auto Start", isOn: $autoStartEnabled)
+                Toggle("Auto Pause", isOn: $autoPauseEnabled)
+                Toggle("Auto Continue", isOn: $autoContinueEnabled)
+                    .disabled(!autoPauseEnabled)
+            } footer: {
+                Text("Auto Start begins a workout when the connected treadmill is moving. Auto Pause pauses the workout after the treadmill stops and asks whether to stop it. Auto Continue resumes an automatic pause when movement returns.")
+            }
+        }
+        .navigationTitle("Settings")
     }
 }
 

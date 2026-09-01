@@ -37,6 +37,8 @@ final class WorkoutManager: NSObject, ObservableObject {
     private var timer: Timer?
     private var startedAt: Date?
     private var lastMetricDate = Date()
+    private var pauseStartedAt: Date?
+    private var totalPausedDuration: TimeInterval = 0
 
     func requestAuthorization() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -76,10 +78,14 @@ final class WorkoutManager: NSObject, ObservableObject {
 
     func start() {
         guard !isRunning else { return }
+        timer?.invalidate()
+        timer = nil
         review = nil
         saveError = nil
         heartRate = 0
         elapsedText = "00:00"
+        pauseStartedAt = nil
+        totalPausedDuration = 0
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .running
         configuration.locationType = .indoor
@@ -101,26 +107,38 @@ final class WorkoutManager: NSObject, ObservableObject {
                     self?.failStart(with: error)
                 }
             }
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.updateElapsed() }
+            startElapsedTimer()
         } catch {
             failStart(with: error)
         }
     }
 
-    func togglePause() {
-        guard let session, isRunning else { return }
-        if isPaused { session.resume() } else { session.pause() }
+    @discardableResult
+    func togglePause() -> Bool {
+        guard let session, isRunning else { return isPaused }
+        let shouldPause = !isPaused
+        if shouldPause {
+            session.pause()
+            handleSessionState(.paused, date: Date())
+        } else {
+            session.resume()
+            handleSessionState(.running, date: Date())
+        }
+        return shouldPause
     }
 
-    func pauseForConnectionLoss() {
-        guard let session, isRunning, !isPaused else { return }
+    @discardableResult
+    func pauseForConnectionLoss() -> Bool {
+        guard let session, isRunning, !isPaused else { return false }
         session.pause()
-        isPaused = true
+        handleSessionState(.paused, date: Date())
+        return true
     }
 
     func stop(distanceMeters: Double, caloriesKcal: Double) {
         guard let session, let builder, isRunning else { return }
         let endDate = Date()
+        updateElapsed(at: endDate)
         addFinalMetrics(to: builder,
                         distanceMeters: distanceMeters,
                         caloriesKcal: caloriesKcal,
@@ -213,10 +231,38 @@ final class WorkoutManager: NSObject, ObservableObject {
         lastMetricDate = now
     }
 
+    private func startElapsedTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.updateElapsed() }
+    }
+
     private func updateElapsed() {
+        updateElapsed(at: Date())
+    }
+
+    private func updateElapsed(at date: Date) {
         guard let startedAt else { return }
-        let seconds = max(0, Int(Date().timeIntervalSince(startedAt)))
+        let currentPauseDuration = pauseStartedAt.map { date.timeIntervalSince($0) } ?? 0
+        let activeDuration = date.timeIntervalSince(startedAt) - totalPausedDuration - currentPauseDuration
+        let seconds = max(0, Int(activeDuration))
         elapsedText = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func handleSessionState(_ state: HKWorkoutSessionState, date: Date) {
+        if state == .paused {
+            if pauseStartedAt == nil { pauseStartedAt = date }
+            timer?.invalidate()
+            timer = nil
+        } else if state == .running {
+            if let pauseStartedAt {
+                totalPausedDuration += max(0, date.timeIntervalSince(pauseStartedAt))
+                self.pauseStartedAt = nil
+            }
+            lastMetricDate = date
+            if isRunning { startElapsedTimer() }
+        }
+        isPaused = state == .paused
+        updateElapsed(at: date)
     }
 
     private func addFinalMetrics(to builder: HKLiveWorkoutBuilder,
@@ -271,6 +317,8 @@ final class WorkoutManager: NSObject, ObservableObject {
         session = nil
         builder = nil
         startedAt = nil
+        pauseStartedAt = nil
+        totalPausedDuration = 0
         review = nil
         saveError = nil
         heartRate = 0
@@ -283,6 +331,8 @@ final class WorkoutManager: NSObject, ObservableObject {
         builder = nil
         timer?.invalidate()
         timer = nil
+        pauseStartedAt = nil
+        totalPausedDuration = 0
         isRunning = false
         isPaused = false
         startError = error.localizedDescription
@@ -292,7 +342,7 @@ final class WorkoutManager: NSObject, ObservableObject {
 extension WorkoutManager: HKWorkoutSessionDelegate {
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState,
                         from fromState: HKWorkoutSessionState, date: Date) {
-        DispatchQueue.main.async { self.isPaused = toState == .paused }
+        DispatchQueue.main.async { self.handleSessionState(toState, date: date) }
     }
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
