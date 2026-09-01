@@ -5,12 +5,15 @@ Runnerz is a focused watchOS running app for Bluetooth FTMS treadmills. It provi
 ## Features
 
 - Scan for and connect to Bluetooth FTMS treadmills.
-- Start, pause, resume, and stop indoor running workouts.
-- Display live speed, elapsed time, distance, calories, and heart rate.
-- Pause automatically and notify you when a connected treadmill drops offline.
-- Review time, distance, total calories, and average heart rate before saving.
-- Save completed workouts as standard `Running` workouts in Apple Health.
+- Choose between `Run` and `Walking` workout modes.
+- Start, pause, resume, and finish indoor workouts with a cancellable countdown.
+- Display live speed, elapsed time, distance, and heart rate.
+- Automatically start, pause, and resume workouts based on treadmill movement, with haptic feedback.
+- Parse treadmill incline when an FTMS treadmill reports it and calculate cumulative ascent and descent as workout metadata.
+- Review time, distance, average pace, calories, average heart rate, and maximum heart rate before saving.
+- Save completed workouts as standard `Running` or `Walking` workouts in Apple Health.
 - Confirm destructive and HealthKit actions using native watchOS controls.
+- Use a simulator-only treadmill to test workout flow and automatic behavior without Bluetooth hardware.
 - No account, backend, analytics, or network service required.
 
 ## Requirements
@@ -28,15 +31,15 @@ Runnerz is a focused watchOS running app for Bluetooth FTMS treadmills. It provi
 4. Select your local development team under Signing & Capabilities.
 5. Build and run.
 
-The target includes HealthKit and workout-processing configuration. On launch, Runnerz requests HealthKit access first and Bluetooth access second; treadmill discovery and workout controls remain unavailable until both are granted. On a real watch, grant workout write and heart-rate read access when prompted. If access was previously denied, update it in the Health privacy settings on the paired iPhone.
+The target includes HealthKit and workout-processing configuration. On launch, Runnerz requests HealthKit and Bluetooth access. On a real watch, grant workout write and heart-rate read access when prompted, then connect an FTMS treadmill from the Treadmills screen. If access was previously denied, update it in the Health privacy settings on the paired iPhone. Simulator builds connect to a fake treadmill automatically.
 
 ## Simulator Testing
 
-The watchOS simulator can be used to test the interface, workout flow, HealthKit authorization, and Health app saving. It cannot discover a physical treadmill over Bluetooth. Use a paired Apple Watch and a real FTMS treadmill to test scanning, control commands, and connection-loss behavior.
+The watchOS simulator includes a simulator-only treadmill. Open the Treadmills screen to use the Walk, Run, and Stop treadmill controls, then test sport selection, countdown cancellation, automatic start, automatic pause, automatic continue, and the review flow. The simulator does not discover physical treadmills, provide real heart-rate data, or simulate incline changes. Use a paired Apple Watch and a real FTMS treadmill to test Bluetooth scanning, control commands, connection loss, HealthKit data, and reported incline.
 
 ## HealthKit Data
 
-Runnerz creates indoor workouts with the `.running` activity type. It uses HealthKit's live workout session and builder, writes standard distance and active-energy samples from the treadmill, and records heart-rate data supplied by Apple Watch. Completed workouts are saved to Apple Health only after explicit confirmation.
+Runnerz creates indoor workouts with the selected `.running` or `.walking` activity type. It uses HealthKit's live workout session and builder, records heart-rate data supplied by Apple Watch, and uses Apple Health's active-energy statistics for calories. It parses FTMS incline when available and integrates each reported incline against distance to store cumulative `HKMetadataKeyElevationAscended` and `HKMetadataKeyElevationDescended` values. Treadmills without incline data do not produce elevation metadata. Completed workouts are saved to Apple Health only after explicit confirmation. Apple Fitness may not display elevation metadata for every indoor third-party workout even when it is stored in HealthKit.
 
 Runnerz does not upload workout data anywhere. HealthKit permissions are controlled by Apple Watch and Apple Health.
 
@@ -53,9 +56,9 @@ Runnerz does not upload workout data anywhere. HealthKit permissions are control
 ```sh
 xcodebuild \
   -project Runnerz/Runnerz.xcodeproj \
-  -scheme Runnerz \
-  -sdk watchsimulator \
-  -destination 'generic/platform=watchOS Simulator' \
+  -target Runnerz \
+  -configuration Debug \
+  -sdk watchsimulator26.5 \
   CODE_SIGNING_ALLOWED=NO \
   build
 ```

@@ -1,5 +1,6 @@
 import SwiftUI
 import HealthKit
+import WatchKit
 
 private extension Color {
     static let runnerzRed = Color(red: 0.96, green: 0.04, blue: 0.09)
@@ -51,6 +52,20 @@ private enum SportType: Hashable {
         switch self {
         case .running: return "Start run"
         case .walking: return "Start walk"
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .running: return "Running"
+        case .walking: return "Walking"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .running: return "Run"
+        case .walking: return "Walking"
         }
     }
 }
@@ -127,7 +142,7 @@ struct ContentView: View {
                 TreadmillListView(treadmill: treadmill)
             }
             .navigationDestination(isPresented: $showingSettings) {
-                SettingsView()
+                SettingsView(selectedSport: selectedSport)
             }
         }
         .task {
@@ -138,7 +153,7 @@ struct ContentView: View {
             while !Task.isCancelled {
                 workout.recordMetrics(speedKph: treadmill.speedKph,
                                       distanceMeters: treadmill.distanceMeters,
-                                      caloriesKcal: treadmill.caloriesKcal)
+                                      inclinePercent: treadmill.inclinePercent)
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -174,7 +189,7 @@ struct TreadmillListView: View {
                 ContentUnavailableView {
                     Label("No treadmills found", systemImage: "antenna.radiowaves.left.and.right.slash")
                 } description: {
-                    Text("Keep your treadmill awake, then scan again.")
+                    Text("Turn your treadmill off and back on, keep it awake, then scan again.")
                 }
             } else {
                 ForEach(treadmill.treadmills) { device in
@@ -194,6 +209,27 @@ struct TreadmillListView: View {
                     }
                 }
             }
+
+#if targetEnvironment(simulator)
+            Section("Simulator treadmill") {
+                Text("Use these controls to test automatic start, pause, and continue.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Text("Speed: \(String(format: "%.1f", treadmill.speedKph)) km/h")
+                    .font(.caption.monospacedDigit())
+
+                Button("Walk · 3 km/h") {
+                    treadmill.setSimulatorSpeed(3)
+                }
+                Button("Run · 8 km/h") {
+                    treadmill.setSimulatorSpeed(8)
+                }
+                Button("Stop treadmill") {
+                    treadmill.setSimulatorSpeed(0)
+                }
+            }
+#endif
         }
         .navigationTitle("Treadmills")
         .toolbar {
@@ -220,7 +256,7 @@ private struct WatchHomeView: View {
     @State private var showingConnectionLoss = false
     @State private var countdown: Int?
     @State private var countdownTask: Task<Void, Never>?
-    @State private var countdownIsAutomatic = false
+    @State private var activeWorkoutPage = 0
     @State private var autoStartSince: Date?
     @State private var lowSpeedSince: Date?
     @State private var autoPauseTriggered = false
@@ -235,56 +271,24 @@ private struct WatchHomeView: View {
                 if let review = workout.review {
                     WorkoutReviewView(workout: workout, review: review)
                 } else if workout.isRunning {
-                    Spacer()
-
-                    VStack(spacing: 16) {
+                    TabView(selection: $activeWorkoutPage) {
                         RunningMetricsView(treadmill: treadmill, workout: workout)
+                            .tag(0)
 
-                        HStack {
-                            Button {
-                                let willPause = workout.togglePause()
-                                treadmill.pauseTreadmill(paused: willPause)
-                            } label: {
-                                Image(systemName: workout.isPaused ? "play.fill" : "pause.fill")
-                                    .foregroundStyle(.yellow)
-                                    .frame(width: 44, height: 44)
-                            }
-                            .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
-                            .buttonBorderShape(.circle)
-                            .tint(.yellow)
-                            .accessibilityLabel(workout.isPaused ? "Resume" : "Pause")
-                            .disabled(!treadmill.isConnected)
-
-                            Button(role: .destructive) {
-                                showingStopConfirmation = true
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .foregroundStyle(Color.runnerzRed)
-                                    .frame(width: 44, height: 44)
-                            }
-                            .buttonStyle(.glass(.regular.tint(Color.runnerzRed).interactive()))
-                            .buttonBorderShape(.circle)
-                            .tint(Color.runnerzRed)
-                            .accessibilityLabel("Stop")
-                            .confirmationDialog("Stop this workout?", isPresented: $showingStopConfirmation) {
-                                Button("Stop Workout", role: .destructive) {
-                                    treadmill.stopTreadmill()
-                                    workout.stop(distanceMeters: treadmill.distanceMeters,
-                                                 caloriesKcal: treadmill.caloriesKcal)
-                                }
-                                Button("Cancel", role: .cancel) {}
-                            }
-                        }
+                        ActiveWorkoutControlsView(treadmill: treadmill,
+                                                  workout: workout,
+                                                  showingStopConfirmation: $showingStopConfirmation)
+                            .tag(1)
                     }
-
-                    Spacer()
+                    .tabViewStyle(.verticalPage)
+                    .scenePadding(.horizontal)
                 } else {
                     VStack(spacing: 8) {
                         TabView(selection: $selectedSport) {
-                            SportPageView(sport: .running, treadmill: treadmill)
+                            SportPageView(sport: .running)
                                 .tag(SportType.running)
 
-                            SportPageView(sport: .walking, treadmill: treadmill)
+                            SportPageView(sport: .walking)
                                 .tag(SportType.walking)
                         }
                         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -308,7 +312,7 @@ private struct WatchHomeView: View {
             }
 
             if let countdown {
-                CountdownOverlay(value: countdown)
+                CountdownOverlay(value: countdown, onCancel: cancelStartCountdown)
             }
 
         }
@@ -327,13 +331,16 @@ private struct WatchHomeView: View {
             checkAutomaticBehavior()
         }
         .onChange(of: workout.isRunning) { _, isRunning in
-            if !isRunning {
+            if isRunning {
+                activeWorkoutPage = 0
+                if treadmill.speedKph > autoStartThreshold {
+                    workoutHasMoved = true
+                }
+            } else {
                 autoStartSince = nil
                 lowSpeedSince = nil
                 autoPauseTriggered = false
                 workoutHasMoved = false
-            } else if treadmill.speedKph > autoStartThreshold {
-                workoutHasMoved = true
             }
         }
         .task {
@@ -364,9 +371,8 @@ private struct WatchHomeView: View {
         }
     }
 
-    private func beginStartCountdown(automatic: Bool = false) {
+    private func beginStartCountdown() {
         guard countdown == nil, !workout.isRunning, workout.review == nil, treadmill.isConnected else { return }
-        countdownIsAutomatic = automatic
         countdownTask?.cancel()
         countdownTask = Task { @MainActor in
             for value in stride(from: 3, through: 1, by: -1) {
@@ -390,19 +396,29 @@ private struct WatchHomeView: View {
                 return
             }
 
+#if targetEnvironment(simulator)
+            treadmill.resetSimulatorTotals()
+#endif
             workout.start(activityType: selectedSport.activityType)
-            if !countdownIsAutomatic { treadmill.startTreadmill() }
+            treadmill.startTreadmill()
             countdown = nil
-            countdownIsAutomatic = false
             countdownTask = nil
         }
+    }
+
+    private func startAutomatically() {
+        guard !workout.isRunning else { return }
+#if targetEnvironment(simulator)
+        treadmill.resetSimulatorTotals()
+#endif
+        workout.start(activityType: selectedSport.activityType)
+        WKInterfaceDevice.current().play(.start)
     }
 
     private func cancelStartCountdown() {
         countdownTask?.cancel()
         countdownTask = nil
         countdown = nil
-        countdownIsAutomatic = false
     }
 
     private func checkAutomaticBehavior() {
@@ -417,16 +433,14 @@ private struct WatchHomeView: View {
             if speed > autoStartThreshold {
                 if autoStartSince == nil { autoStartSince = now }
                 if now.timeIntervalSince(autoStartSince!) >= 1 {
-                    beginStartCountdown(automatic: true)
+                    startAutomatically()
                     autoStartSince = nil
                 }
             } else {
                 autoStartSince = nil
-                if countdownIsAutomatic { cancelStartCountdown() }
             }
         } else {
             autoStartSince = nil
-            if countdownIsAutomatic { cancelStartCountdown() }
         }
 
         if autoPauseEnabled && workout.isRunning && !workout.isPaused && workoutHasMoved {
@@ -436,7 +450,7 @@ private struct WatchHomeView: View {
                     autoPauseTriggered = true
                     if workout.pauseForConnectionLoss() {
                         treadmill.pauseTreadmill(paused: true)
-                        showingStopConfirmation = true
+                        WKInterfaceDevice.current().play(.stop)
                     }
                 }
             } else {
@@ -447,17 +461,62 @@ private struct WatchHomeView: View {
         }
 
         if autoPauseTriggered && autoContinueEnabled && workout.isPaused && speed > autoStartThreshold {
-            showingStopConfirmation = false
             autoPauseTriggered = false
             let willPause = workout.togglePause()
             treadmill.pauseTreadmill(paused: willPause)
+            WKInterfaceDevice.current().play(.start)
         }
+    }
+}
+
+private struct ActiveWorkoutControlsView: View {
+    @ObservedObject var treadmill: FTMSTreadmillManager
+    @ObservedObject var workout: WorkoutManager
+    @Binding var showingStopConfirmation: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+
+            Button {
+                let willPause = workout.togglePause()
+                treadmill.pauseTreadmill(paused: willPause)
+            } label: {
+                Label(workout.isPaused ? "Resume" : "Pause",
+                      systemImage: workout.isPaused ? "play.fill" : "pause.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
+            .tint(.yellow)
+            .accessibilityLabel(workout.isPaused ? "Resume" : "Pause")
+            .disabled(!treadmill.isConnected)
+
+            Button {
+                showingStopConfirmation = true
+            } label: {
+                Label("Finish", systemImage: "checkmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glass(.regular.tint(.green).interactive()))
+            .tint(.green)
+            .accessibilityLabel("Finish workout")
+            .confirmationDialog("Are you sure you want to finish this workout?", isPresented: $showingStopConfirmation) {
+                Button("Finish Workout") {
+                    treadmill.stopTreadmill()
+                    workout.stop(distanceMeters: treadmill.distanceMeters,
+                                 inclinePercent: treadmill.inclinePercent)
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 private struct SportPageView: View {
     let sport: SportType
-    @ObservedObject var treadmill: FTMSTreadmillManager
 
     var body: some View {
         VStack(spacing: 8) {
@@ -468,7 +527,7 @@ private struct SportPageView: View {
                     .font(.system(size: 39.2, weight: .medium))
                     .foregroundStyle(sport.accent)
 
-                Text(treadmill.isConnected ? "Ready" : "Connect treadmill")
+                Text(sport.displayName)
                     .font(.caption.weight(.semibold))
             }
 
@@ -480,6 +539,7 @@ private struct SportPageView: View {
 
 private struct CountdownOverlay: View {
     let value: Int
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(spacing: 6) {
@@ -489,6 +549,9 @@ private struct CountdownOverlay: View {
             Text("\(value)")
                 .font(.system(size: 52, weight: .black, design: .rounded))
                 .contentTransition(.numericText())
+            Button("Cancel", action: onCancel)
+                .buttonStyle(.glass(.regular.interactive()))
+                .buttonBorderShape(.capsule)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.ultraThinMaterial)
@@ -497,19 +560,28 @@ private struct CountdownOverlay: View {
 }
 
 private struct SettingsView: View {
+    let selectedSport: SportType
     @AppStorage("autoStartEnabled") private var autoStartEnabled = false
     @AppStorage("autoPauseEnabled") private var autoPauseEnabled = false
     @AppStorage("autoContinueEnabled") private var autoContinueEnabled = false
 
     var body: some View {
         List {
-            Section {
+            Section("Automatic Start") {
                 Toggle("Auto Start", isOn: $autoStartEnabled)
+                Label("Selected sport: \(selectedSport.name)", systemImage: selectedSport.icon)
+                Text("Auto Start begins the selected sport when the treadmill is moving. Swipe on the home screen before starting to choose Running or Walking.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Automatic Pause") {
                 Toggle("Auto Pause", isOn: $autoPauseEnabled)
                 Toggle("Auto Continue", isOn: $autoContinueEnabled)
                     .disabled(!autoPauseEnabled)
-            } footer: {
-                Text("Auto Start begins a workout when the connected treadmill is moving. Auto Pause pauses the workout after the treadmill stops and asks whether to stop it. Auto Continue resumes an automatic pause when movement returns.")
+                Text("Auto Pause pauses with haptic feedback when movement stops. Auto Continue resumes with haptic feedback when movement returns.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Settings")
@@ -525,10 +597,6 @@ private struct WorkoutReviewView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.green)
-
                 WorkoutMetricRow(icon: "clock.fill",
                                  title: "TIME",
                                  value: review.elapsedText,
@@ -537,6 +605,10 @@ private struct WorkoutReviewView: View {
                                  title: "DISTANCE",
                                  value: "\(String(format: "%.1f", review.distanceMeters / 1000)) km",
                                  color: .green)
+                WorkoutMetricRow(icon: "speedometer",
+                                 title: "AVG PACE",
+                                 value: averagePaceText,
+                                 color: .green)
                 WorkoutMetricRow(icon: "flame.fill",
                                  title: "CALORIES",
                                  value: review.caloriesKcal > 0 ? "\(String(format: "%.0f", review.caloriesKcal)) kcal" : "-- kcal",
@@ -544,6 +616,10 @@ private struct WorkoutReviewView: View {
                 WorkoutMetricRow(icon: "heart.fill",
                                  title: "AVG HEART RATE",
                                  value: review.averageHeartRate > 0 ? "\(review.averageHeartRate) BPM" : "-- BPM",
+                                 color: Color.runnerzRed)
+                WorkoutMetricRow(icon: "arrow.up.heart.fill",
+                                 title: "MAX HEART RATE",
+                                 value: review.maxHeartRate > 0 ? "\(review.maxHeartRate) BPM" : "-- BPM",
                                  color: Color.runnerzRed)
 
                 VStack(spacing: 8) {
@@ -554,15 +630,17 @@ private struct WorkoutReviewView: View {
                             ProgressView()
                                 .accessibilityLabel("Saving workout")
                         } else {
-                            Text("Save Workout")
+                            Label("Save", systemImage: "checkmark")
                         }
                     }
                     .buttonStyle(.glass(.regular.tint(.green).interactive()))
                     .tint(.green)
                     .disabled(workout.isSaving)
 
-                    Button("Trash Workout", role: .destructive) {
+                    Button(role: .destructive) {
                         showingTrashConfirmation = true
+                    } label: {
+                        Label("Trash", systemImage: "trash")
                     }
                     .disabled(workout.isSaving)
                 }
@@ -602,17 +680,33 @@ private struct WorkoutReviewView: View {
             }
         }
         .confirmationDialog("Save this workout to Health?", isPresented: $showingSaveConfirmation) {
-            Button("Save Workout") {
+            Button("Save") {
                 workout.saveReviewedWorkout()
             }
             Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Trash this workout?", isPresented: $showingTrashConfirmation) {
-            Button("Trash Workout", role: .destructive) {
+            Button("Trash", role: .destructive) {
                 workout.discardReviewedWorkout()
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private var averagePaceText: String {
+        let components = review.elapsedText.split(separator: ":")
+        guard components.count == 2,
+              let minutes = Int(components[0]),
+              let seconds = Int(components[1]),
+              review.distanceMeters > 0 else {
+            return "--:-- /km"
+        }
+
+        let distanceKilometers = review.distanceMeters / 1000
+        let secondsPerKilometer = Double(minutes * 60 + seconds) / distanceKilometers
+        guard secondsPerKilometer.isFinite else { return "--:-- /km" }
+        let roundedSeconds = Int(secondsPerKilometer.rounded())
+        return String(format: "%d:%02d /km", roundedSeconds / 60, roundedSeconds % 60)
     }
 }
 
@@ -650,16 +744,40 @@ private struct RunningMetricsView: View {
     @ObservedObject var workout: WorkoutManager
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "heart.fill")
                     .foregroundStyle(Color.runnerzRed)
                 Text(workout.heartRate > 0 ? "\(workout.heartRate) BPM" : "-- BPM")
             }
             .font(.headline.monospacedDigit())
-            Text("\(String(format: "%.1f", treadmill.speedKph)) km/h  •  \(workout.elapsedText)")
-                .font(.caption2.monospacedDigit())
+
+            ActiveMetric(title: "TIME", value: workout.elapsedText, prominent: true)
+            ActiveMetric(title: "SPEED",
+                         value: "\(String(format: "%.1f", treadmill.speedKph)) km/h")
+            ActiveMetric(title: "DISTANCE",
+                         value: "\(String(format: "%.1f", treadmill.distanceMeters / 1000)) km")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ActiveMetric: View {
+    let title: String
+    let value: String
+    var prominent = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(value)
+                .font((prominent ? Font.title : Font.title3).monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(title)
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
     }
 }

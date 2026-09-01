@@ -10,7 +10,6 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     @Published var speedKph = 0.0
     @Published var distanceMeters = 0.0
     @Published var inclinePercent = 0.0
-    @Published var caloriesKcal = 0.0
     @Published private(set) var connectionText = "Permissions required"
     @Published private(set) var treadmills: [Treadmill] = []
     @Published private(set) var isConnected = false
@@ -24,12 +23,25 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var authorizationContinuation: CheckedContinuation<Bool, Never>?
     private var scanningEnabled = false
+#if targetEnvironment(simulator)
+    private static let simulatorTreadmillID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+    private var simulatorTimer: Timer?
+#endif
 
     override init() {
         super.init()
     }
 
     func requestAuthorization() async -> Bool {
+#if targetEnvironment(simulator)
+        await MainActor.run {
+            self.treadmills = [Treadmill(id: Self.simulatorTreadmillID, name: "Simulator treadmill")]
+            self.connectionText = "Connected"
+            self.isConnected = true
+            self.startSimulatorTimer()
+        }
+        return true
+#else
         await withCheckedContinuation { continuation in
             authorizationContinuation = continuation
             if central == nil {
@@ -38,10 +50,18 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
             resolveAuthorization()
             if authorizationContinuation != nil { startAuthorizationProbe() }
         }
+#endif
     }
 
     func startScanning() {
         scanningEnabled = true
+#if targetEnvironment(simulator)
+        treadmills = [Treadmill(id: Self.simulatorTreadmillID, name: "Simulator treadmill")]
+        connectionText = "Connected"
+        isConnected = true
+        startSimulatorTimer()
+        return
+#else
         guard let central, CBManager.authorization == .allowedAlways, central.state == .poweredOn else { return }
         central.stopScan()
 
@@ -59,9 +79,16 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
         if !isConnected {
             connectionText = "Looking for treadmill"
         }
+#endif
     }
 
     func connect(to treadmill: Treadmill) {
+#if targetEnvironment(simulator)
+        guard treadmill.id == Self.simulatorTreadmillID else { return }
+        connectionText = "Connected"
+        isConnected = true
+        return
+#else
         guard let central, CBManager.authorization == .allowedAlways,
               let peripheral = peripherals[treadmill.id] else { return }
         central.stopScan()
@@ -70,19 +97,60 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
         isConnected = false
         connectionText = "Connecting"
         central.connect(peripheral)
+#endif
     }
 
     func startTreadmill() {
+#if targetEnvironment(simulator)
+        if speedKph <= 0 { speedKph = 4.0 }
+        startSimulatorTimer()
+        return
+#else
         writeControlPoint([0x07])
+#endif
     }
 
     func pauseTreadmill(paused: Bool) {
+#if targetEnvironment(simulator)
+        if paused {
+            speedKph = 0
+        } else if speedKph <= 0 {
+            speedKph = 4.0
+        }
+        startSimulatorTimer()
+        return
+#else
         writeControlPoint(paused ? [0x08, 0x00] : [0x07])
+#endif
     }
 
     func stopTreadmill() {
+#if targetEnvironment(simulator)
+        speedKph = 0
+        return
+#else
         writeControlPoint([0x08, 0x01])
+#endif
     }
+
+#if targetEnvironment(simulator)
+    func setSimulatorSpeed(_ speed: Double) {
+        speedKph = max(0, speed)
+        startSimulatorTimer()
+    }
+
+    func resetSimulatorTotals() {
+        distanceMeters = 0
+    }
+
+    private func startSimulatorTimer() {
+        guard simulatorTimer == nil else { return }
+        simulatorTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.speedKph > 0 else { return }
+            self.distanceMeters += self.speedKph / 3.6
+        }
+    }
+#endif
 
     private func writeControlPoint(_ bytes: [UInt8]) {
         guard let peripheral, let controlPoint, CBManager.authorization == .allowedAlways else { return }
@@ -220,9 +288,7 @@ extension FTMSTreadmillManager: CBPeripheralDelegate {
         if flags & 0x0200 != 0 { _ = take(2) }
         if flags & 0x0400 != 0 { _ = take(2) }
         if flags & 0x0800 != 0 { _ = take(2) }
-        if flags & 0x1000 != 0, let bytes = take(2) {
-            caloriesKcal = Double(u16(bytes))
-        }
+        if flags & 0x1000 != 0 { _ = take(2) }
         if flags & 0x2000 != 0 { _ = take(2) }
         if flags & 0x4000 != 0 { _ = take(2) }
         if flags & 0x8000 != 0 { _ = take(1) }

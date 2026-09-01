@@ -16,6 +16,7 @@ final class WorkoutManager: NSObject, ObservableObject {
 
     struct WorkoutReview {
         let averageHeartRate: Int
+        let maxHeartRate: Int
         let elapsedText: String
         let distanceMeters: Double
         let caloriesKcal: Double
@@ -39,6 +40,10 @@ final class WorkoutManager: NSObject, ObservableObject {
     private var lastMetricDate = Date()
     private var pauseStartedAt: Date?
     private var totalPausedDuration: TimeInterval = 0
+    private var elevationAscendedMeters = 0.0
+    private var elevationDescendedMeters = 0.0
+    private var lastDistanceMeters = 0.0
+    private var hasDistanceSample = false
 
     func requestAuthorization() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -86,6 +91,10 @@ final class WorkoutManager: NSObject, ObservableObject {
         elapsedText = "00:00"
         pauseStartedAt = nil
         totalPausedDuration = 0
+        elevationAscendedMeters = 0
+        elevationDescendedMeters = 0
+        lastDistanceMeters = 0
+        hasDistanceSample = false
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = activityType
         configuration.locationType = .indoor
@@ -135,13 +144,15 @@ final class WorkoutManager: NSObject, ObservableObject {
         return true
     }
 
-    func stop(distanceMeters: Double, caloriesKcal: Double) {
+    func stop(distanceMeters: Double, inclinePercent: Double) {
         guard let session, let builder, isRunning else { return }
         let endDate = Date()
         updateElapsed(at: endDate)
+        if !isPaused {
+            recordElevation(distanceMeters: distanceMeters, inclinePercent: inclinePercent)
+        }
         addFinalMetrics(to: builder,
                         distanceMeters: distanceMeters,
-                        caloriesKcal: caloriesKcal,
                         endDate: endDate) { [weak self] error in
             guard let self else { return }
             if let error {
@@ -158,8 +169,12 @@ final class WorkoutManager: NSObject, ObservableObject {
                     self.isPaused = false
                     self.timer?.invalidate()
                     self.timer = nil
-                    let averageHeartRate = builder.statistics(for: HKObjectType.quantityType(forIdentifier: .heartRate)!)?
+                    let heartRateStatistics = builder.statistics(for: HKObjectType.quantityType(forIdentifier: .heartRate)!)
+                    let averageHeartRate = heartRateStatistics?
                         .averageQuantity()?
+                        .doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                    let maxHeartRate = heartRateStatistics?
+                        .maximumQuantity()?
                         .doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
                     let finalizedDistance = builder.statistics(for: HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!)?
                         .sumQuantity()?
@@ -168,9 +183,10 @@ final class WorkoutManager: NSObject, ObservableObject {
                         .sumQuantity()?
                         .doubleValue(for: .kilocalorie()) ?? 0
                     self.review = WorkoutReview(averageHeartRate: Int((averageHeartRate ?? 0).rounded()),
+                                                maxHeartRate: Int((maxHeartRate ?? 0).rounded()),
                                                 elapsedText: self.elapsedText,
                                                 distanceMeters: finalizedDistance > 0 ? finalizedDistance : distanceMeters,
-                                                caloriesKcal: finalizedCalories > 0 ? finalizedCalories : caloriesKcal)
+                                                caloriesKcal: finalizedCalories)
                 }
             }
         }
@@ -223,11 +239,12 @@ final class WorkoutManager: NSObject, ObservableObject {
         resetAfterReview()
     }
 
-    func recordMetrics(speedKph: Double, distanceMeters: Double, caloriesKcal: Double) {
+    func recordMetrics(speedKph: Double, distanceMeters: Double, inclinePercent: Double) {
         guard isRunning, !isPaused, let builder else { return }
         let now = Date()
         guard now.timeIntervalSince(lastMetricDate) > 0.2 else { return }
         let start = lastMetricDate
+        recordElevation(distanceMeters: distanceMeters, inclinePercent: inclinePercent)
 
         if let speedType = HKQuantityType.quantityType(forIdentifier: .runningSpeed) {
             let speed = HKQuantity(unit: HKUnit.meter().unitDivided(by: .second()), doubleValue: max(0, speedKph / 3.6))
@@ -273,7 +290,6 @@ final class WorkoutManager: NSObject, ObservableObject {
 
     private func addFinalMetrics(to builder: HKLiveWorkoutBuilder,
                                  distanceMeters: Double,
-                                 caloriesKcal: Double,
                                  endDate: Date,
                                  completion: @escaping (Error?) -> Void) {
         var samples: [HKSample] = []
@@ -286,16 +302,8 @@ final class WorkoutManager: NSObject, ObservableObject {
                                             end: endDate))
         }
 
-        if caloriesKcal > 0, let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
-            let energy = HKQuantity(unit: .kilocalorie(), doubleValue: caloriesKcal)
-            samples.append(HKQuantitySample(type: energyType,
-                                            quantity: energy,
-                                            start: startedAt ?? endDate,
-                                            end: endDate))
-        }
-
         guard !samples.isEmpty else {
-            completion(nil)
+            addElevationMetadata(to: builder, completion: completion)
             return
         }
 
@@ -303,10 +311,58 @@ final class WorkoutManager: NSObject, ObservableObject {
             if let error {
                 completion(error)
             } else if success {
-                completion(nil)
+                self.addElevationMetadata(to: builder, completion: completion)
             } else {
                 completion(NSError(domain: "Runnerz.HealthKit", code: 1,
                                    userInfo: [NSLocalizedDescriptionKey: "HealthKit rejected the treadmill totals."]))
+            }
+        }
+    }
+
+    private func recordElevation(distanceMeters: Double, inclinePercent: Double) {
+        if !hasDistanceSample {
+            lastDistanceMeters = distanceMeters
+            hasDistanceSample = true
+            return
+        }
+
+        let distanceDelta = distanceMeters - lastDistanceMeters
+        lastDistanceMeters = distanceMeters
+        guard distanceDelta > 0 else { return }
+
+        let verticalDelta = distanceDelta * sin(atan(inclinePercent / 100))
+        if verticalDelta >= 0 {
+            elevationAscendedMeters += verticalDelta
+        } else {
+            elevationDescendedMeters += abs(verticalDelta)
+        }
+    }
+
+    private func addElevationMetadata(to builder: HKLiveWorkoutBuilder,
+                                     completion: @escaping (Error?) -> Void) {
+        var metadata: [String: Any] = [:]
+        if elevationAscendedMeters > 0 {
+            metadata[HKMetadataKeyElevationAscended] = HKQuantity(unit: .meter(),
+                                                                   doubleValue: elevationAscendedMeters)
+        }
+        if elevationDescendedMeters > 0 {
+            metadata[HKMetadataKeyElevationDescended] = HKQuantity(unit: .meter(),
+                                                                    doubleValue: elevationDescendedMeters)
+        }
+
+        guard !metadata.isEmpty else {
+            completion(nil)
+            return
+        }
+
+        builder.addMetadata(metadata) { success, error in
+            if let error {
+                completion(error)
+            } else if success {
+                completion(nil)
+            } else {
+                completion(NSError(domain: "Runnerz.HealthKit", code: 2,
+                                   userInfo: [NSLocalizedDescriptionKey: "HealthKit rejected treadmill elevation totals."]))
             }
         }
     }
@@ -325,6 +381,10 @@ final class WorkoutManager: NSObject, ObservableObject {
         startedAt = nil
         pauseStartedAt = nil
         totalPausedDuration = 0
+        elevationAscendedMeters = 0
+        elevationDescendedMeters = 0
+        lastDistanceMeters = 0
+        hasDistanceSample = false
         review = nil
         saveError = nil
         heartRate = 0
