@@ -20,21 +20,12 @@ struct ContentView: View {
     @ObservedObject var treadmill: FTMSTreadmillManager
     @ObservedObject var workout: WorkoutManager
     @State private var showingTreadmills = false
+    @State private var showingSettings = false
     @State private var permissionsReady = false
-    @State private var permissionMessage: String?
 
     var body: some View {
         NavigationStack {
-            Group {
-                if permissionsReady || permissionMessage == nil {
-                    WatchHomeView(treadmill: treadmill, workout: workout)
-                } else {
-                    PermissionGateView(message: permissionMessage!,
-                                       retry: {
-                                           Task { await preparePermissions() }
-                                       })
-                }
-            }
+            WatchHomeView(treadmill: treadmill, workout: workout)
                 .containerBackground(for: .navigation) {
                     ZStack {
                         Color.black
@@ -63,8 +54,8 @@ struct ContentView: View {
                     }
             }
             .toolbar {
-                if permissionsReady && !showingTreadmills && !workout.isRunning && workout.review == nil {
-                    ToolbarItem(placement: .topBarTrailing) {
+                if !showingTreadmills && !workout.isRunning && workout.review == nil {
+                    ToolbarItem(placement: .topBarLeading) {
                         Button {
                             showingTreadmills = true
                         } label: {
@@ -72,12 +63,24 @@ struct ContentView: View {
                         }
                         .accessibilityLabel("Treadmills")
                     }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                        }
+                        .accessibilityLabel("Settings")
+                    }
                 }
             }
             .toolbar(.hidden, for: .bottomBar)
             .toolbarBackground(.hidden, for: .bottomBar)
             .navigationDestination(isPresented: $showingTreadmills) {
                 TreadmillListView(treadmill: treadmill)
+            }
+            .navigationDestination(isPresented: $showingSettings) {
+                SettingsView()
             }
         }
         .task {
@@ -95,57 +98,15 @@ struct ContentView: View {
     }
 
     private func preparePermissions() async {
-        await MainActor.run {
-            permissionMessage = nil
-        }
-
         workout.clearStartError()
-        guard await workout.requestAuthorization() else {
-            await MainActor.run {
-                permissionMessage = "Allow Runnerz to access Health data, then tap Try Again."
-            }
-            return
-        }
-
-        guard await treadmill.requestAuthorization() else {
-            await MainActor.run {
-                permissionMessage = "Allow Runnerz to use Bluetooth, then tap Try Again."
-            }
-            return
-        }
-
-        treadmill.startScanning()
+        let healthReady = await workout.requestAuthorization()
+        let bluetoothReady = await treadmill.requestAuthorization()
+        if bluetoothReady { treadmill.startScanning() }
         await MainActor.run {
-            permissionsReady = true
+            permissionsReady = healthReady && bluetoothReady
         }
     }
 
-}
-
-private struct PermissionGateView: View {
-    let message: String
-    let retry: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.title2)
-                .foregroundStyle(.yellow)
-
-            Text("Permissions Required")
-                .font(.headline)
-
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button("Try Again", action: retry)
-                .buttonStyle(.glass(.regular.tint(.yellow).interactive()))
-                .tint(.yellow)
-        }
-        .scenePadding()
-    }
 }
 
 struct TreadmillListView: View {
@@ -293,19 +254,6 @@ private struct WatchHomeView: View {
                 CountdownOverlay(value: countdown)
             }
 
-            if !workout.isRunning && workout.review == nil && countdown == nil {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.glass(.regular.interactive()))
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Settings")
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(.bottom, 4)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scenePadding(.horizontal)
