@@ -23,6 +23,23 @@ private enum SportType: Hashable {
         }
     }
 
+    var glowColors: [Color] {
+        switch self {
+        case .running:
+            return [
+                Color(red: 0.96, green: 0.04, blue: 0.09, opacity: 0.55),
+                Color(red: 0.75, green: 0.02, blue: 0.05, opacity: 0.2),
+                Color(red: 0.75, green: 0.02, blue: 0.05, opacity: 0),
+            ]
+        case .walking:
+            return [
+                Color(red: 1, green: 0.45, blue: 0, opacity: 0.55),
+                Color(red: 0.82, green: 0.25, blue: 0, opacity: 0.2),
+                Color(red: 0.82, green: 0.25, blue: 0, opacity: 0),
+            ]
+        }
+    }
+
     var activityType: HKWorkoutActivityType {
         switch self {
         case .running: return .running
@@ -69,15 +86,7 @@ struct ContentView: View {
 
                         RadialGradient(
                             colors: [
-                                workout.review == nil
-                                    ? selectedSport.accent.opacity(0.55)
-                                    : Color(red: 0, green: 0.9, blue: 0.2, opacity: 0.55),
-                                workout.review == nil
-                                    ? selectedSport.accent.opacity(0.2)
-                                    : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0.2),
-                                workout.review == nil
-                                    ? selectedSport.accent.opacity(0)
-                                    : Color(red: 0, green: 0.7, blue: 0.1, opacity: 0),
+                                glowColors[0], glowColors[1], glowColors[2]
                             ],
                             center: .center,
                             startRadius: 0,
@@ -133,6 +142,15 @@ struct ContentView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+    }
+
+    private var glowColors: [Color] {
+        if workout.review == nil { return selectedSport.glowColors }
+        return [
+            Color(red: 0, green: 0.9, blue: 0.2, opacity: 0.55),
+            Color(red: 0, green: 0.7, blue: 0.1, opacity: 0.2),
+            Color(red: 0, green: 0.7, blue: 0.1, opacity: 0),
+        ]
     }
 
     private func preparePermissions() async {
