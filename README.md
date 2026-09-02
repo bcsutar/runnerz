@@ -13,6 +13,7 @@ Runnerz is a focused watchOS running app for Bluetooth FTMS treadmills. It provi
 - Review time, distance, average pace, calories, average heart rate, and maximum heart rate before saving.
 - Save completed workouts as standard `Running` or `Walking` workouts in Apple Health.
 - Confirm destructive and HealthKit actions using native watchOS controls.
+- Add Runnerz as a simple launcher complication to supported watch faces.
 - Use a simulator-only treadmill to test workout flow and automatic behavior without Bluetooth hardware.
 - No account, backend, analytics, or network service required.
 
@@ -28,7 +29,7 @@ Runnerz is a focused watchOS running app for Bluetooth FTMS treadmills. It provi
 1. Clone the repository.
 2. Open `Runnerz/Runnerz.xcodeproj` in Xcode.
 3. Select the `Runnerz` scheme and an Apple Watch simulator or paired Apple Watch.
-4. Select your local development team under Signing & Capabilities.
+4. Select your local development team under Signing & Capabilities for both targets.
 5. Build and run.
 
 The target includes HealthKit and workout-processing configuration. On launch, Runnerz requests HealthKit and Bluetooth access. On a real watch, grant workout write and heart-rate read access when prompted, then connect an FTMS treadmill from the Treadmills screen. If access was previously denied, update it in the Health privacy settings on the paired iPhone. Simulator builds connect to a fake treadmill automatically.

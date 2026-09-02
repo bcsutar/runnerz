@@ -11,7 +11,33 @@
 		A00000000000000000000002 /* FTMSTreadmillManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* FTMSTreadmillManager.swift */; };
 		A00000000000000000000003 /* WorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000013 /* WorkoutManager.swift */; };
 		A00000000000000000000004 /* RunnerzIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* RunnerzIcon.png */; };
+		B00000000000000000000004 /* RunnerzComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* RunnerzComplication.swift */; };
+		B00000000000000000000006 /* RunnerzComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* RunnerzComplication.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B00000000000000000000015 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000050 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B00000000000000000000011;
+			remoteInfo = RunnerzComplication;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B00000000000000000000017 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B00000000000000000000006 /* RunnerzComplication.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A00000000000000000000010 /* Runnerz.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runnerz.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -21,10 +47,20 @@
 		A00000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000015 /* Runnerz.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runnerz.entitlements; sourceTree = "<group>"; };
 		A00000000000000000000017 /* RunnerzIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = RunnerzIcon.png; sourceTree = "<group>"; };
+		B00000000000000000000001 /* RunnerzComplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerzComplication.swift; sourceTree = "<group>"; };
+		B00000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B00000000000000000000003 /* RunnerzComplication.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RunnerzComplication.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A00000000000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000008 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -38,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000031 /* Runnerz */,
+				B00000000000000000000010 /* RunnerzComplication */,
 				A00000000000000000000032 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,8 +96,18 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000010 /* Runnerz.app */,
+				B00000000000000000000003 /* RunnerzComplication.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000010 /* RunnerzComplication */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000001 /* RunnerzComplication.swift */,
+				B00000000000000000000002 /* Info.plist */,
+			);
+			path = RunnerzComplication;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -73,15 +120,34 @@
 				A00000000000000000000041 /* Sources */,
 				A00000000000000000000020 /* Frameworks */,
 				A00000000000000000000042 /* Resources */,
+				B00000000000000000000017 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B00000000000000000000016 /* PBXTargetDependency */,
 			);
 			name = Runnerz;
 			productName = Runnerz;
 			productReference = A00000000000000000000010 /* Runnerz.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B00000000000000000000011 /* RunnerzComplication */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00000000000000000000012 /* Build configuration list for PBXNativeTarget "RunnerzComplication" */;
+			buildPhases = (
+				B00000000000000000000007 /* Sources */,
+				B00000000000000000000008 /* Frameworks */,
+				B00000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RunnerzComplication;
+			productName = RunnerzComplication;
+			productReference = B00000000000000000000003 /* RunnerzComplication.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -92,6 +158,9 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					A00000000000000000000040 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					B00000000000000000000011 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -110,6 +179,7 @@
 			projectRoot = "";
 			targets = (
 				A00000000000000000000040 /* Runnerz */,
+				B00000000000000000000011 /* RunnerzComplication */,
 			);
 		};
 /* End PBXProject section */
@@ -120,6 +190,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000004 /* RunnerzIcon.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -136,7 +213,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B00000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000004 /* RunnerzComplication.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B00000000000000000000016 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B00000000000000000000011 /* RunnerzComplication */;
+			targetProxy = B00000000000000000000015 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000060 /* Debug */ = {
@@ -189,6 +282,54 @@
 			};
 			name = Release;
 		};
+		B00000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = RunnerzComplication/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.runnerz.watch.complication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		B00000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = RunnerzComplication/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.runnerz.watch.complication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -206,6 +347,15 @@
 			buildConfigurations = (
 				A00000000000000000000062 /* Debug */,
 				A00000000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00000000000000000000012 /* Build configuration list for PBXNativeTarget "RunnerzComplication" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00000000000000000000013 /* Debug */,
+				B00000000000000000000014 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -89,6 +89,7 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var selectedSport: SportType = .running
     @State private var permissionsReady = false
+    @AppStorage("autoStartEnabled") private var autoStartEnabled = false
 
     var body: some View {
         NavigationStack {
@@ -142,19 +143,26 @@ struct ContentView: View {
                 TreadmillListView(treadmill: treadmill)
             }
             .navigationDestination(isPresented: $showingSettings) {
-                SettingsView(selectedSport: selectedSport)
+                SettingsView()
             }
         }
         .task {
             await preparePermissions()
         }
-        .task(id: permissionsReady) {
-            guard permissionsReady else { return }
-            while !Task.isCancelled {
+        .task(id: permissionsReady && workout.isRunning) {
+            guard permissionsReady && workout.isRunning else { return }
+            while !Task.isCancelled && workout.isRunning {
                 workout.recordMetrics(speedKph: treadmill.speedKph,
                                       distanceMeters: treadmill.distanceMeters,
                                       inclinePercent: treadmill.inclinePercent)
                 try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .onChange(of: autoStartEnabled) { _, enabled in
+            if enabled {
+                treadmill.startScanning()
+            } else if !workout.isRunning {
+                treadmill.stopScanning()
             }
         }
     }
@@ -172,7 +180,7 @@ struct ContentView: View {
         workout.clearStartError()
         let healthReady = await workout.requestAuthorization()
         let bluetoothReady = await treadmill.requestAuthorization()
-        if bluetoothReady { treadmill.startScanning() }
+        if bluetoothReady && autoStartEnabled { treadmill.startScanning() }
         await MainActor.run {
             permissionsReady = healthReady && bluetoothReady
         }
@@ -186,10 +194,19 @@ struct TreadmillListView: View {
     var body: some View {
         List {
             if treadmill.treadmills.isEmpty {
-                ContentUnavailableView {
-                    Label("No treadmills found", systemImage: "antenna.radiowaves.left.and.right.slash")
-                } description: {
-                    Text("Turn your treadmill off and back on, keep it awake, then scan again.")
+                if treadmill.isScanning {
+                    ProgressView("Looking for treadmills")
+                        .frame(maxWidth: .infinity)
+                } else {
+                    ContentUnavailableView {
+                        Label("No treadmills found", systemImage: "antenna.radiowaves.left.and.right.slash")
+                    } description: {
+                        Text("Turn your treadmill off and back on, keep it awake, then scan again.")
+                    } actions: {
+                        Button("Scan Again") {
+                            treadmill.startScanning()
+                        }
+                    }
                 }
             } else {
                 ForEach(treadmill.treadmills) { device in
@@ -232,15 +249,11 @@ struct TreadmillListView: View {
 #endif
         }
         .navigationTitle("Treadmills")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    treadmill.startScanning()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .accessibilityLabel("Scan again")
-            }
+        .onAppear {
+            treadmill.startScanning()
+        }
+        .onDisappear {
+            treadmill.stopScanning()
         }
     }
 }
@@ -264,6 +277,10 @@ private struct WatchHomeView: View {
 
     private let autoStartThreshold = 0.5
     private let autoPauseThreshold = 0.3
+
+    private var shouldMonitorAutomation: Bool {
+        treadmill.isConnected && (autoStartEnabled || (workout.isRunning && autoPauseEnabled))
+    }
 
     var body: some View {
         ZStack {
@@ -328,6 +345,7 @@ private struct WatchHomeView: View {
             showingConnectionLoss = true
         }
         .onChange(of: treadmill.speedKph) { _, _ in
+            guard shouldMonitorAutomation else { return }
             checkAutomaticBehavior()
         }
         .onChange(of: workout.isRunning) { _, isRunning in
@@ -343,10 +361,15 @@ private struct WatchHomeView: View {
                 workoutHasMoved = false
             }
         }
-        .task {
-            while !Task.isCancelled {
+        .task(id: shouldMonitorAutomation) {
+            guard shouldMonitorAutomation else { return }
+            while !Task.isCancelled && shouldMonitorAutomation {
                 checkAutomaticBehavior()
-                try? await Task.sleep(for: .seconds(1))
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
             }
         }
         .onDisappear {
@@ -560,7 +583,6 @@ private struct CountdownOverlay: View {
 }
 
 private struct SettingsView: View {
-    let selectedSport: SportType
     @AppStorage("autoStartEnabled") private var autoStartEnabled = false
     @AppStorage("autoPauseEnabled") private var autoPauseEnabled = false
     @AppStorage("autoContinueEnabled") private var autoContinueEnabled = false
@@ -569,7 +591,6 @@ private struct SettingsView: View {
         List {
             Section("Automatic Start") {
                 Toggle("Auto Start", isOn: $autoStartEnabled)
-                Label("Selected sport: \(selectedSport.name)", systemImage: selectedSport.icon)
                 Text("Auto Start begins the selected sport when the treadmill is moving. Swipe on the home screen before starting to choose Running or Walking.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -699,14 +720,14 @@ private struct WorkoutReviewView: View {
               let minutes = Int(components[0]),
               let seconds = Int(components[1]),
               review.distanceMeters > 0 else {
-            return "--:-- /km"
+            return "--'--\""
         }
 
         let distanceKilometers = review.distanceMeters / 1000
         let secondsPerKilometer = Double(minutes * 60 + seconds) / distanceKilometers
-        guard secondsPerKilometer.isFinite else { return "--:-- /km" }
+        guard secondsPerKilometer.isFinite else { return "--'--\"" }
         let roundedSeconds = Int(secondsPerKilometer.rounded())
-        return String(format: "%d:%02d /km", roundedSeconds / 60, roundedSeconds % 60)
+        return String(format: "%d'%02d\"", roundedSeconds / 60, roundedSeconds % 60)
     }
 }
 
@@ -753,12 +774,18 @@ private struct RunningMetricsView: View {
             .font(.headline.monospacedDigit())
 
             ActiveMetric(title: "TIME", value: workout.elapsedText, prominent: true)
-            ActiveMetric(title: "SPEED",
-                         value: "\(String(format: "%.1f", treadmill.speedKph)) km/h")
+            ActiveMetric(title: "PACE", value: currentPaceText)
             ActiveMetric(title: "DISTANCE",
                          value: "\(String(format: "%.1f", treadmill.distanceMeters / 1000)) km")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var currentPaceText: String {
+        guard treadmill.speedKph > 0 else { return "--'--\"" }
+        let secondsPerKilometer = 3600 / treadmill.speedKph
+        let roundedSeconds = Int(secondsPerKilometer.rounded())
+        return String(format: "%d'%02d\"", roundedSeconds / 60, roundedSeconds % 60)
     }
 }
 

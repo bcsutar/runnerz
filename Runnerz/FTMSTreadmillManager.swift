@@ -13,6 +13,7 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     @Published private(set) var connectionText = "Permissions required"
     @Published private(set) var treadmills: [Treadmill] = []
     @Published private(set) var isConnected = false
+    @Published private(set) var isScanning = false
 
     private let serviceUUID = CBUUID(string: "1826")
     private let treadmillDataUUID = CBUUID(string: "2ACD")
@@ -23,6 +24,7 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var authorizationContinuation: CheckedContinuation<Bool, Never>?
     private var scanningEnabled = false
+    private var scanTimeoutTimer: Timer?
 #if targetEnvironment(simulator)
     private static let simulatorTreadmillID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
     private var simulatorTimer: Timer?
@@ -54,16 +56,31 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
     }
 
     func startScanning() {
-        scanningEnabled = true
 #if targetEnvironment(simulator)
+        scanTimeoutTimer?.invalidate()
+        scanningEnabled = true
+        isScanning = false
         treadmills = [Treadmill(id: Self.simulatorTreadmillID, name: "Simulator treadmill")]
         connectionText = "Connected"
         isConnected = true
         startSimulatorTimer()
         return
 #else
-        guard let central, CBManager.authorization == .allowedAlways, central.state == .poweredOn else { return }
+        guard !isConnected,
+              let central,
+              CBManager.authorization == .allowedAlways,
+              central.state == .poweredOn else { return }
+        scanningEnabled = true
+        isScanning = true
         central.stopScan()
+        scanTimeoutTimer?.invalidate()
+        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.scanningEnabled = false
+            self.isScanning = false
+            self.central?.stopScan()
+            self.scanTimeoutTimer = nil
+        }
 
         if isConnected, let peripheral {
             treadmills.removeAll { $0.id != peripheral.identifier }
@@ -82,15 +99,34 @@ final class FTMSTreadmillManager: NSObject, ObservableObject {
 #endif
     }
 
+    func stopScanning() {
+        scanningEnabled = false
+        isScanning = false
+        scanTimeoutTimer?.invalidate()
+        scanTimeoutTimer = nil
+#if targetEnvironment(simulator)
+        return
+#else
+        central?.stopScan()
+#endif
+    }
+
     func connect(to treadmill: Treadmill) {
 #if targetEnvironment(simulator)
         guard treadmill.id == Self.simulatorTreadmillID else { return }
+        scanTimeoutTimer?.invalidate()
+        scanTimeoutTimer = nil
+        isScanning = false
         connectionText = "Connected"
         isConnected = true
         return
 #else
         guard let central, CBManager.authorization == .allowedAlways,
               let peripheral = peripherals[treadmill.id] else { return }
+        scanningEnabled = false
+        isScanning = false
+        scanTimeoutTimer?.invalidate()
+        scanTimeoutTimer = nil
         central.stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
@@ -219,6 +255,7 @@ extension FTMSTreadmillManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         isConnected = false
+        isScanning = false
         connectionText = "Connection failed"
     }
 
